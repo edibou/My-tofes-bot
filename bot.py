@@ -172,36 +172,56 @@ def fetch_odds_for_fixture(fixture_id):
 # ------------------------------------------------------------------
 def build_coupon(games, risk_pct, target_odds):
     risk = max(0, min(100, risk_pct))
+    fav_bias = 1 - (risk / 100)   # נטייה לפבוריט: גבוהה בסיכון נמוך
 
-    n_games = 3 + round((risk / 100) * 5)   # 3 עד 8 משחקים
-    n_games = min(n_games, len(games))
-    chosen = random.sample(games, n_games)
+    max_games = min(len(games), 3 + round((risk / 100) * 9))  # עד ~12
 
-    fav_bias = 1 - (risk / 100)
+    pool = random.sample(games, len(games))   # ערבוב
+
+    def pick_sign(g):
+        odds = g.get("odds") or {"1": 1.8, "X": 3.4, "2": 4.0}
+        by_odds = sorted(odds.items(), key=lambda kv: kv[1])  # מהנמוך (פבוריט) לגבוה
+        if random.random() < fav_bias * 0.8:
+            return by_odds[0]                       # פבוריט
+        return random.choice(by_odds[1:]) if len(by_odds) > 1 else by_odds[0]
 
     picks = []
     est_odds = 1.0
-    for g in chosen:
-        odds = g.get("odds") or {"1": 1.8, "X": 3.4, "2": 4.0}
-        by_odds = sorted(odds.items(), key=lambda kv: kv[1])
-        favorite = by_odds[0]
+    for g in pool:
+        if len(picks) >= max_games:
+            break
+        sign, leg = pick_sign(g)
 
-        if random.random() < fav_bias * 0.8:
-            sign, leg = favorite
-        else:
-            sign, leg = random.choice(by_odds[1:]) if len(by_odds) > 1 else favorite
+        # אם יש יעד: בדוק אם כדאי להוסיף את המשחק הזה
+        if target_odds > 0 and picks:
+            # כבר עברנו את היעד? עצור.
+            if est_odds >= target_odds:
+                break
+            # האם התוספת תקפיץ אותנו רחוק מעל היעד? אם הפספוס למעלה גדול מהפספוס
+            # אם נעצור עכשיו — עדיף לעצור (בוחרים את הקרוב יותר ליעד).
+            over = est_odds * leg
+            if over > target_odds:
+                gap_stop = target_odds - est_odds        # כמה חסר אם נעצור
+                gap_over = over - target_odds            # כמה נחרוג אם נוסיף
+                if gap_over > gap_stop:
+                    break
 
         picks.append((f"{g['home']} - {g['away']}", sign, round(leg, 2)))
         est_odds *= leg
+
+        # בלי יעד: 3-8 משחקים לפי סיכון
+        if target_odds <= 0 and len(picks) >= (3 + round((risk / 100) * 5)):
+            break
 
     est_odds = round(est_odds, 2)
 
     note = ""
     if target_odds > 0:
-        if est_odds < target_odds * 0.7:
-            note = "היחס המשוער נמוך מהיעד שלך — נסה להעלות את רמת הסיכון."
+        if est_odds < target_odds * 0.75:
+            note = ("לא הצלחתי להגיע ליחס שביקשת עם המשחקים שיש היום — "
+                    "זה הכי קרוב שאפשר. נסה יחס נמוך יותר.")
         elif est_odds > target_odds * 1.5:
-            note = "היחס המשוער גבוה מהיעד שלך — נסה להוריד את רמת הסיכון."
+            note = "היחס יצא גבוה מהיעד — אין צירוף משחקים שמתקרב יותר ליעד שביקשת."
 
     return picks, est_odds, note
 
