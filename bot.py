@@ -59,11 +59,29 @@ FALLBACK_GAMES = [
 # מצבי השיחה
 RISK, AMOUNT, ODDS = range(3)
 
+# ליגות גדולות + ישראליות (מזהי API-Football v3)
+ALLOWED_LEAGUES = {
+    1: "World Cup",                 # מונדיאל 2026
+    39: "Premier League",
+    140: "La Liga",
+    135: "Serie A",
+    78: "Bundesliga",
+    61: "Ligue 1",
+    2: "Champions League",
+    3: "Europa League",
+    848: "Conference League",
+    88: "Eredivisie",
+    94: "Primeira Liga",
+    203: "Super Lig (Turkey)",
+    383: "Ligat haAl (Israel)",     # ליגת העל
+    382: "Liga Leumit (Israel)",    # ליגה לאומית
+}
+
 
 # ------------------------------------------------------------------
 # שליפת משחקים ויחסים אמיתיים מ-API-Football
 # ------------------------------------------------------------------
-def fetch_today_games(max_games=25):
+def fetch_today_games(max_games=40):
     if not FOOTBALL_API_KEY:
         return None
     try:
@@ -79,11 +97,18 @@ def fetch_today_games(max_games=25):
         if not fixtures:
             return None
 
-        upcoming = [
+        # רק ליגות מהרשימה המאושרת
+        filtered = [
             f for f in fixtures
+            if f.get("league", {}).get("id") in ALLOWED_LEAGUES
+        ]
+
+        # עדיפות למשחקים שטרם התחילו
+        upcoming = [
+            f for f in filtered
             if f.get("fixture", {}).get("status", {}).get("short") in ("NS", "TBD")
         ]
-        chosen = (upcoming or fixtures)[:max_games]
+        chosen = (upcoming or filtered)[:max_games]
 
         games = []
         for f in chosen:
@@ -91,10 +116,15 @@ def fetch_today_games(max_games=25):
             home = teams.get("home", {}).get("name")
             away = teams.get("away", {}).get("name")
             fid = f.get("fixture", {}).get("id")
+            league = f.get("league", {}).get("name", "")
             if not home or not away:
                 continue
             odds = fetch_odds_for_fixture(fid)
-            games.append({"home": home, "away": away, "odds": odds})
+            # רק משחקים עם יחסים אמיתיים — בלי ערכי ברירת מחדל מזויפים
+            if not odds or not all(k in odds for k in ("1", "X", "2")):
+                continue
+            games.append({"home": home, "away": away, "odds": odds, "league": league})
+
         return games or None
     except Exception as e:
         log.warning("fetch_today_games failed: %s", e)
@@ -261,10 +291,11 @@ async def odds_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     games = fetch_today_games()
     if games:
-        source_label = f"משחקים אמיתיים של היום ({date.today().isoformat()})"
+        source_label = f"ליגות גדולות + ישראל, עם יחסים אמיתיים ({date.today().isoformat()})"
     else:
         games = FALLBACK_GAMES
-        source_label = "רשימת גיבוי (לא נשלפו משחקי היום — בדוק מפתח API)"
+        source_label = ("רשימת גיבוי — אין היום משחקים בליגות הגדולות עם יחסים זמינים "
+                        "(או בעיית מפתח API)")
 
     risk = context.user_data["risk"]
     amount = context.user_data["amount"]
